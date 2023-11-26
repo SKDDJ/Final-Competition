@@ -40,12 +40,3 @@
 5. **日志记录** ：在主进程中，计算当前步数 `total_step`，并在达到一定步数时记录日志和保存模型。
 6. **模型保存** ：在达到指定步数时保存模型的 checkpoint 文件，以便后续进行模型推理。
 7. **训练结束** ：训练结束时保存最终的模型 checkpoint 文件。
-=======
-## Repository No Longer Maintained
-
-**This repository is no longer actively maintained due to dependency conflicts making it difficult to execute the code effectively.**
-
-We apologize for any inconvenience caused. Please note that the code provided may not be compatible with the latest libraries and frameworks.
-
-Thank you for your understanding.
->>>>>>> e985f0733e2d8096540aab7ec269b1beccbcda4a
