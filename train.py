@@ -29,8 +29,6 @@ from transformers import AutoTokenizer,PretrainedConfig
 from pathlib import Path
 from libs.data import PersonalizedBase, PromptDataset, collate_fn
 from libs.uvit_multi_post_ln_v1 import UViT
-# import diffusers
-# from diffusers import DiffusionPipeline
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
@@ -41,7 +39,7 @@ import tqdm
 from accelerate.logging import get_logger 
 import itertools
 import json
-#from pathos.multiprocessing import ProcessingPool as Pool
+
 from peft import inject_adapter_in_model, LoraConfig,get_peft_model
 
 
@@ -260,10 +258,10 @@ def train(config):
                                      mask_size= 64 #custom_diffusion里mask_size的值为64
                                     )
     train_dataset_loader = DataLoader(train_dataset,
-                                      batch_size=4,
+                                      batch_size=config.batch_size,
                                       shuffle=True,
                                       collate_fn=lambda examples: collate_fn(examples, args.with_prior_preservation),
-                                      num_workers=0,
+                                      num_workers=config.dataloader_num_workers,
                                       )
 
     train_data_generator = utils.get_data_generator(train_dataset_loader, enable_tqdm=accelerator.is_main_process, desc='train')
@@ -313,16 +311,6 @@ def train(config):
 
         
         accelerator.backward(bloss)
-        # for name, param in nnet.named_parameters():
-        #     if param.grad is not None:
-        #         print(name)
-    
-        
-
-        # for name, param in text_encoder.named_parameters():
-        #     if param.grad is not None:
-        #         print(name)
-        # 如果参数的梯度不为None，说明存在梯度
         
        
         # Zero out the gradients for all token embeddings except the newly added
@@ -505,7 +493,13 @@ def get_args():
         action="store_true",
         help="real images as prior.",
     )
-
+    parser.add_argument(
+        "--dataloader_num_workers",
+        type=int,
+        default=0,
+        help="Number of subprocesses to use for data loading.",
+    )
+    
     parser.add_argument("--modifier_token", type=str, default="<new1>", help="modifier token")
     parser.add_argument(
         "--initializer_token", type=str, default="ktn+pll+ucd", help="A token to use as initializer word."
@@ -556,6 +550,8 @@ def main():
     config.instance_prompt = args.instance_prompt
     config.class_prompt = args.class_prompt
     
+    config.dataloader_num_workers = args.dataloader_num_workers
+    
     config.gradient_accumulation_steps = args.gradient_accumulation_steps
     config.with_prior_preservation = args.with_prior_preservation
     
@@ -596,3 +592,5 @@ accelerate launch train.py \
   
   export LD_LIBRARY_PATH=/home/shiyiming/anaconda3/envs/competition/lib/python3.10/site-packages/torch/lib/
 """
+
+

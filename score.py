@@ -8,17 +8,29 @@ from PIL import Image
 import argparse
 import warnings
 from score_utils.face_model import FaceAnalysis
+import ImageReward as RM
+from typing import Union
+from configs.unidiffuserv1 import get_config
 
 warnings.filterwarnings("ignore")
 
 class Evaluator():
     def __init__(self):
-        self.clip_device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device=self.clip_device)
+        config = get_config()
+        config.device = "cuda:1"
+        self.clip_device = config.device
+        # self.clip_device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = self.clip_device
+        self.clip_model, self.clip_preprocess = clip.load("other_models/clip/ViT-B-32.pt", device=self.clip_device)
         self.clip_tokenizer = clip.tokenize
-
+        
         self.face_model = FaceAnalysis(providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-        self.face_model.prepare(ctx_id=0, det_size=(640, 640))
+        
+        # self.image_reward = RM.load("ImageReward-v1.0")
+
+        self.image_reward = RM.load("./ImageReward/ImageReward.pt", med_config="./ImageReward/med_config.json")
+        self.face_model.prepare(ctx_id=0, det_size=(512, 512))
+        
 
     def pil_to_cv2(self, pil_img):
         return np.array(pil_img)[:,:,::-1]
@@ -54,7 +66,7 @@ class Evaluator():
             return 0
         else:
             similarity = feat1 @ feat2.T
-            return max(0,similarity.item())
+            return similarity.item()
         
     def sim_face_emb(self, img1, embs):
         """ 
@@ -69,7 +81,7 @@ class Evaluator():
             return 0
         else:
             similarity = feat1 @ embs.T
-            return max(0,similarity.max().item())
+            return similarity.mean().item()
     
     def get_img_embedding(self, img):
         """ 
@@ -91,20 +103,7 @@ class Evaluator():
         feat /= feat.norm(dim=-1, keepdim=True)
         return feat
         
-    
-    def sim_clip_img(self, img1, img2):
-        """ 
-        calcualte img img similarity using CLIP
-        """
-        feat1 = self.get_img_embedding(img1)
-        feat2 = self.get_img_embedding(img2)
-        similarity = feat1 @ feat2.T
-        return max(0,similarity.item())
-    
-    def sim_clip_imgembs(self, img, embs):
-        feat = self.get_img_embedding(img)
-        similarity = feat @ embs.T
-        return max(0,similarity.max().item())
+ 
         
     def sim_clip_text(self, img, text):
         """ 
@@ -116,135 +115,226 @@ class Evaluator():
         return max(0,similarity.item())
     
     
-    def score1_gen_vs_img_face(self, gen, img, alpha_img=0.5, alpha_face=0.5):
-        img_sim = self.sim_clip_img(gen,img)
-        face_sim = self.sim_face(gen, img)
-        
-        return alpha_img * img_sim + alpha_face * face_sim
-    
-    def score2_gen_vs_img(self, gen, img, alpha_img=1.0):
-        img_sim = self.sim_clip_img(gen,img)
-                
-        return alpha_img * img_sim
-    
-    def score3_gen_vs_text(self, gen, text, alpha_text=1.0):
-        text_sim = self.sim_clip_text(gen,text)
-        return alpha_text * text_sim
-        
-    def score4_gen_vs_text_refimg(self, gen, text, ref, alpha_text=0.5, alpha_img=0.5):
-        text_sim = self.sim_clip_text(gen,text)
-        img_sim = self.sim_clip_img(gen, ref)
-    
-        return alpha_text * text_sim + alpha_img * img_sim
+
     
 def read_img_pil(p):
-    return Image.open(p)
+    return Image.open(p).convert("RGB")
 
-def score(dataset_base, prompts_base, outputs_base):
-    eval = Evaluator()
-    
-    DATANAMES = ["boy1", "boy2", "girl1", "girl2"]
-    SIM_TASKNAMES = ['boy1_sim', 'boy2_sim', 'girl1_sim', 'girl2_sim']
-    EDIT_TASKNAMES = ['boy1_edit', 'boy2_edit', 'girl1_edit', 'girl2_edit']
-    
-    ## folder check
-    for taskname in DATANAMES:
-        task_dataset = os.path.join(dataset_base, f'{taskname}')
-        assert os.path.exists(task_dataset), f"Missing Dataset folder: {task_dataset}"
-    for taskname in SIM_TASKNAMES + EDIT_TASKNAMES:
-        task_prompt = os.path.join(prompts_base, f'{taskname}.json')
-        assert os.path.exists(task_prompt), f"Missing Prompt file: {task_prompt}"
-        task_output = os.path.join(outputs_base, f'{taskname}')
-        assert os.path.exists(task_output), f"Missing Output folder: {task_output}"
-        
-    def score_task(sample_folder, dataset_folder, prompt_json):
-        ## get prompt, face, and ref image from dataset folder
-        refs = glob.glob(os.path.join(dataset_folder, "*.jpg")) + glob.glob(os.path.join(dataset_folder, "*.jpeg"))
-        refs_images = [read_img_pil(ref) for ref in refs]
-        
-        refs_clip = [eval.get_img_embedding(i) for i in refs_images]
-        refs_clip = torch.cat(refs_clip)
-        #### print(refs_clip.shape)
-        
-        refs_embs = [eval.get_face_embedding(i) for i in refs_images]
-        refs_embs = [emb for emb in refs_embs if emb is not None]
-        refs_embs = torch.cat(refs_embs)
-        #### print(refs_embs.shape)
-        
-        
-        
-        #### print("Ref Count: ", len(refs_images))
-        #### print("Emb: ", refs_embs.shape)
-        
-        pompt_scores = []
-        prompts = json.load(open(prompt_json, "r"))
-        for prompt_index, prompt in enumerate(prompts):
-            sample_scores = []
-            for idx in range(0,3): ## 3 generation for each prompt
-                sample_path = os.path.join(sample_folder,f"{prompt_index}-{idx:03}.jpg") ## for face / target reference
-                try:
-                    sample = read_img_pil(sample_path)
-                    # sample vs ref
-                    score_face = eval.sim_face_emb(sample, refs_embs)
-                    score_clip = eval.sim_clip_imgembs(sample, refs_clip)
-                    # sample vs prompt
-                    score_text = eval.sim_clip_text(sample, prompt)
-                    sample_score = [score_face, score_clip, score_text]
-                except Exception as e:
-                    #### print(e)
-                    sample_score = [0.0, 0.0, 0.0]
-                #### print(f"Score for sample {idx}: ", sample_score)
-                sample_scores.append(sample_score)
-            pompt_score = np.mean(sample_scores, axis=0)
-            #### print(f"Score for prompt {prompt_index}: ", pompt_score)
-            pompt_scores.append(pompt_score)
-        task_score = np.mean(pompt_scores, axis=0)
-        return task_score
-    
-    ## calculate sim score
-    sim_scores = []
-    for dataname, taskname in zip(DATANAMES, SIM_TASKNAMES):
-        task_dataset = os.path.join(dataset_base, f'{dataname}')
-        task_prompt = os.path.join(prompts_base, f'{taskname}.json')
-        task_output = os.path.join(outputs_base, f'{taskname}')
-        score = score_task(task_output, task_dataset, task_prompt)
-        print(f"Score for task {taskname}: ", score)
-        sim_scores.append(score)
-    print(sim_scores)
-    sim_ave_score = np.mean(sim_scores, axis=0)
-    
-    edit_scores = []
-    for dataname, taskname in zip(DATANAMES, EDIT_TASKNAMES):
-        task_dataset = os.path.join(dataset_base, f'{dataname}')
-        task_prompt = os.path.join(prompts_base, f'{taskname}.json')
-        task_output = os.path.join(outputs_base, f'{taskname}')
-        score = score_task(task_output, task_dataset, task_prompt)
-        print(f"Score for task {taskname}: ", score)
-        edit_scores.append(score)
-    print(edit_scores)
-    edit_ave_score = np.mean(edit_scores, axis=0)
-    
-    score_dict = {
-        "复现功能的人脸相似度": sim_ave_score[0],
-        "复现功能的CLIP图片相似度": sim_ave_score[1],
 
-        "编辑功能的人脸相似度": edit_ave_score[0],
-        "编辑功能的CLIP图片相似度": edit_ave_score[1],
-        "编辑功能的图文匹配度": edit_ave_score[2],
-    }
-    print(f"\033[91m 最终结果:\n{score_dict}\033[00m")
-    return score_dict
+
+def load_json_files(path):
+    """
+    given a directory, load all json files in that directory
+    return a list of json objects
+    """
+    d_ls = []
+    for file in os.listdir(path):
+        if file.endswith(".json"):
+            with open(os.path.join(path, file), 'r') as f:
+                json_data = json.load(f)
+                d_ls.append(json_data)
+    return d_ls
+
+def pre_check(source_json_dir, gen_json_dir, bound_json_dir):
+    """
+    1. check common ids
+    2. check enough images
+    3. return list of tuple (source_json, gen_json, bound_json)
+    """
+    
+    id_to_source_json = {json_data["id"]: json_data for json_data in load_json_files(source_json_dir)}
+    id_to_gen_json = {json_data["id"]: json_data for json_data in load_json_files(gen_json_dir)}
+    id_to_bound_json = {json_data["id"]: json_data for json_data in load_json_files(bound_json_dir)}
+    
+    common_ids = set(id_to_source_json.keys()) & set(id_to_gen_json.keys())
+    
+    print(f"共有{len(common_ids)}个id")
+    
+    case_pair_ls = []
+    for id in common_ids:
+        source_json = id_to_source_json[id]
+        gen_json = id_to_gen_json[id]
+        bound_json = id_to_bound_json[id]
+        
+        
+        for idx, item in enumerate(gen_json["images"]):
+            if item["prompt"] not in source_json["caption_list"]:
+                print(f"prompt {item['prompt']} not in source json")
+                gen_json["images"].remove(item)
+            if len(item["paths"]) != 4:
+                print(f"delete item {item}")
+                gen_json["images"].remove(item)
+        case_pair_ls.append((source_json, gen_json, bound_json))
+    return case_pair_ls
+
+def score(ev, source_json, gen_json, bound_json, out_json_dir):
+    
+    
+    # get ref images
+    ref_image_paths = [ i["path"] for i in source_json["source_group"]]
+    ref_face_embs = [ev.get_face_embedding(read_img_pil(i)) for i in ref_image_paths]
+    ref_face_embs  = [emb for emb in ref_face_embs if emb is not None] # remove None
+    ref_face_embs = torch.cat(ref_face_embs)
+
+    text_ac_scores = 0
+    face_ac_scores = 0
+    image_reward_ac_scores = 0
+    image_reward_ac_decrease = 0
+    
+    normed_text_ac_scores = 0
+    normed_face_ac_scores = 0
+    normed_image_reward_ac_scores = 0
+    normed_image_reward_ac_decrease = 0
+    out_json = {"id": gen_json["id"], "images": []}
+    commom_prompts = set([item["prompt"] for item in gen_json["images"]]) & set([item["prompt"] for item in bound_json["images"]])
+    prompt_to_item = {item["prompt"]: item for item in gen_json["images"]}
+    bound_prompt_to_item = {item["prompt"]: item for item in bound_json["images"]}
+    if len(commom_prompts) != len(bound_json["images"]):
+        print(f"共有{len(commom_prompts)}个prompt, bound json有{len(bound_json['images'])}个prompt")
+        print(bound_json)
+    
+    for prompt in commom_prompts:
+        item = prompt_to_item[prompt]
+        bound_item = bound_prompt_to_item[prompt]
+        
+        assert item["prompt"] == bound_item["prompt"], f"prompt {item['prompt']} not equal to bound prompt {bound_item['prompt']}"
+        if len(item["paths"]) < 4:
+            continue
+        
+        # clip text similarity
+        samples = [read_img_pil(sample_path) for sample_path in item["paths"]]
+        scores_text = [ev.sim_clip_text(sample, item["prompt"]) for sample in samples]
+        mean_text = np.mean(scores_text)
+        
+        # image reward
+        scores_image_reward = [ev.image_reward.score(item["prompt"], sample_path) for sample_path in item["paths"]]
+        mean_image_reward = np.mean(scores_image_reward)
+        
+        # hps v2
+        # scores_hpsv2 = [ev.hpsv2_score(sample, item["prompt"])[0].item() for sample in samples]
+        # mean_hpsv2 = np.mean(scores_hpsv2)
+        
+        # face similarity
+        sample_faces = [ev.get_face_embedding(sample) for sample in samples]
+        sample_faces = [emb for emb in sample_faces if emb is not None] # remove None
+        if len(sample_faces) <= 1:
+            print("too few faces")
+            continue
+        scores_face = [(sample_face @ ref_face_embs.T).mean().item() for sample_face in sample_faces]
+        mean_face = np.mean(scores_face)
+        
+        subed_score_text = mean_text - bound_item["min_text_sim"]
+        subed_score_face = mean_face - bound_item["min_face_sim"]
+        subed_image_reward = mean_image_reward - bound_item["min_image_reward"]
+        image_reward_decrease = bound_item["max_image_reward"] - mean_image_reward
+        
+        
+        normed_score_text = subed_score_text / (bound_item["max_text_sim"] - bound_item["min_text_sim"])
+        normed_score_face = subed_score_face / (bound_item["max_face_sim"] - bound_item["min_face_sim"])
+        normed_score_image_reward = subed_image_reward / (bound_item["max_image_reward"] - bound_item["min_image_reward"])
+        normed_image_reward_decrease = image_reward_decrease / (bound_item["max_image_reward"] - bound_item["min_image_reward"])
+        
+        if normed_score_image_reward < 0.1:
+            # print(f"Image reward too low for prompt: '{item['prompt']}' in item: {item}")
+            print(f"\033[91mface similarity too low for prompt:\033[0m '{item['prompt']}' in item(id):\033[91m{gen_json['id']}\033[0m")
+            # print("too low image reward")
+            continue
+        if normed_score_face < 0.1:
+            print(f"\033[91mface similarity too low for prompt:\033[0m '{item['prompt']}' in item(id):\033[91m{gen_json['id']}\033[0m")
+            # print(f"face similarity too low for prompt: '{item['prompt']}' in item: {item}")
+            # print("too low face similarity")
+            continue
+        
+        normed_text_ac_scores += normed_score_text
+        normed_face_ac_scores += normed_score_face
+        normed_image_reward_ac_scores += normed_score_image_reward
+        normed_image_reward_ac_decrease += normed_image_reward_decrease
+        
+        face_ac_scores += subed_score_face
+        text_ac_scores += subed_score_text
+        image_reward_ac_scores += subed_image_reward
+        image_reward_ac_decrease += image_reward_decrease
+        
+        out_json["images"].append({"prompt": item["prompt"], 
+                                   "scores_text": scores_text, 
+                                   "scores_face": scores_face, 
+                                   "scores_image_reward": scores_image_reward,
+                                #    "scores_hpsv2": scores_hpsv2,
+                                   "subed_score_text": subed_score_text,
+                                   "subed_score_face": subed_score_face,
+                                    "subded_image_reward": subed_image_reward,
+                                    "image_reward_decrease": image_reward_decrease,
+                                    
+                                    "normed_score_text": normed_score_text,
+                                    "normed_score_face": normed_score_face,
+                                    "normed_score_image_reward": normed_score_image_reward,
+                                    "normed_image_reward_decrease": normed_image_reward_decrease})
+        
+    with open(os.path.join(out_json_dir, f"{gen_json['id']}.json"), 'w') as f:
+        json.dump(out_json, f, indent=4)
+        
+    return {"text_ac_scores":text_ac_scores, 
+            "face_ac_scores":face_ac_scores,
+            "image_reward_ac_scores":image_reward_ac_scores,
+            "image_reward_ac_decrease":image_reward_ac_decrease,
+            
+            "normed_text_ac_scores":normed_text_ac_scores,
+            "normed_face_ac_scores":normed_face_ac_scores,
+            "normed_image_reward_ac_scores":normed_image_reward_ac_scores,
+            "normed_image_reward_ac_decrease":normed_image_reward_ac_decrease,
+            }
     
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluation Script')
-    parser.add_argument('--dataset', type=str, default='./train_data/', help='dataset folder')
-    parser.add_argument('--prompts', type=str, default='./eval_prompts_advance/', help='prompt folder')
-    parser.add_argument('--outputs', type=str, default='./outputs/', help='output folder')
+    parser.add_argument('--source_json_dir', type=str, default='final_json_data/json', help='task json files, original json data to generate images.')
+    
+    
+    # parser.add_argument('--gen_json_dir', type=str, default='aaaaaaasaveresults/aaaajsons', help='json after generating images.')
+    # parser.add_argument("--out_json_dir", type=str, default="aaaaaaasaveresults/aaaascores", help="score json ouput")
+        
+    parser.add_argument('--gen_json_dir', type=str, default='aaaaaaasaveresults/bbbbjsons', help='json after generating images.')
+    parser.add_argument("--out_json_dir", type=str, default="aaaaaaasaveresults/bbbbscores", help="score json ouput")
+    
+    
+    parser.add_argument("--bound_json_dir", type=str, default="abase_json_outputs", help="baseline score json ouput")
 
     args = parser.parse_args()
+    os.makedirs(args.out_json_dir, exist_ok=True)
     
-    eval_score = score(args.dataset, args.prompts, args.outputs)
-    print(eval_score)
+    pairs = pre_check(args.source_json_dir, args.gen_json_dir, args.bound_json_dir)
     
+    ev = Evaluator()
+    total_text_score = 0
+    total_face_score = 0
+    total_image_reward_score = 0
+    total_image_reward_decrease = 0
+    normed_total_text_score = 0
+    normed_total_face_score = 0
+    normed_total_image_reward_score = 0
+    normed_total_image_reward_decrease = 0
+    for source_json, gen_json, bound_json in pairs:
+        rt_dict = score(ev, source_json, gen_json, bound_json, args.out_json_dir)
+        
+        total_text_score += rt_dict["text_ac_scores"]
+        total_face_score += rt_dict["face_ac_scores"]
+        total_image_reward_score += rt_dict["image_reward_ac_scores"]
+        total_image_reward_decrease += rt_dict["image_reward_ac_decrease"]
+        
+        normed_total_text_score += rt_dict["normed_text_ac_scores"]
+        normed_total_face_score += rt_dict["normed_face_ac_scores"]
+        normed_total_image_reward_score += rt_dict["normed_image_reward_ac_scores"]
+        normed_total_image_reward_decrease += rt_dict["normed_image_reward_ac_decrease"]
+    
+    print(f"""
+total_text_score:           {total_text_score:.4f},
+total_face_score:           {total_face_score:.4f},
+total_image_reward_score:   {total_image_reward_score:.4f},
+total_image_reward_decrease:{total_image_reward_decrease:.4f},
+
+normed_total_text_score:           {normed_total_text_score:.4f},
+normed_total_face_score:           {normed_total_face_score:.4f},
+normed_total_image_reward_score:   {normed_total_image_reward_score:.4f},
+normed_total_image_reward_decrease:{normed_total_image_reward_decrease:.4f},
+          """)
     

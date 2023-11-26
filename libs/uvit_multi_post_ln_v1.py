@@ -24,7 +24,7 @@ print(f'uvit attention mode is {ATTENTION_MODE}')
 def timestep_embedding(timesteps, dim, max_period=10000):
     """
     Create sinusoidal timestep embeddings.
-
+    生成了关于时间步的正弦波形嵌入
     :param timesteps: a 1-D Tensor of N indices, one per batch element.
                       These may be fractional.
     :param dim: the dimension of the output.
@@ -48,7 +48,11 @@ def patchify(imgs, patch_size):
 
 
 def unpatchify(x, in_chans):
+    ### x: torch.Size([8, 1200, 16])
+    
     patch_size = int((x.shape[2] // in_chans) ** 0.5)
+    # print(patch_size)
+    
     h = w = int(x.shape[1] ** .5)
     assert h * w == x.shape[1] and patch_size ** 2 * in_chans == x.shape[2]
     x = einops.rearrange(x, 'B (h w) (p1 p2 C) -> B C (h p1) (w p2)', h=h, p1=patch_size, p2=patch_size)
@@ -159,8 +163,9 @@ class UViT(nn.Module):
     def __init__(self, img_size, in_chans, patch_size, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, pos_drop_rate=0., drop_rate=0., attn_drop_rate=0.,
                  norm_layer=nn.LayerNorm, mlp_time_embed=False, use_checkpoint=False,
-                 text_dim=None, num_text_tokens=None, clip_img_dim=None):
+                 text_dim=None, num_text_tokens=None, clip_img_dim=None, n_steps=50, **kwargs):
         super().__init__()
+        self.n_steps = n_steps
         self.in_chans = in_chans
         self.patch_size = patch_size
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
@@ -170,6 +175,9 @@ class UViT(nn.Module):
         assert self.img_size[0] % patch_size == 0 and self.img_size[1] % patch_size == 0
         self.num_patches = (self.img_size[0] // patch_size) * (self.img_size[1] // patch_size)
 
+        # ##### 新的 DDIM 的时间步嵌入
+        # self.time_embedding = nn.Embedding(n_steps, embed_dim) if mlp_time_embed else nn.Identity()
+        ## tmd 在进行 uvit 初始化的时候 uvit 的 mlp_time_embed : false 这里传入的也是 false
         self.time_img_embed = nn.Sequential(
             nn.Linear(embed_dim, 4 * embed_dim),
             nn.SiLU(),
@@ -182,7 +190,7 @@ class UViT(nn.Module):
             nn.Linear(4 * embed_dim, embed_dim),
         ) if mlp_time_embed else nn.Identity()
 
-        self.text_embed = nn.Linear(text_dim, embed_dim)
+        self.text_embed = nn.Linear(text_dim, embed_dim) 
         self.text_out = nn.Linear(embed_dim, text_dim)
 
         self.clip_img_embed = nn.Linear(clip_img_dim, embed_dim)
@@ -235,18 +243,42 @@ class UViT(nn.Module):
 
     def forward(self, img, clip_img, text, t_img, t_text, data_type):
         _, _, H, W = img.shape
+        """torch.Size([4, 4, 64, 64])
+        torch.Size([4, 1, 512])
+        torch.Size([4, 77, 64])
+        torch.Size([4])
+        torch.Size([4])
+        torch.Size([4])
+        """
 
         img = self.patch_embed(img)
-
+        ### t_img : torch.Size([4, 37])
+        
         t_img_token = self.time_img_embed(timestep_embedding(t_img, self.embed_dim))
         t_img_token = t_img_token.unsqueeze(dim=1)
         t_text_token = self.time_text_embed(timestep_embedding(t_text, self.embed_dim))
         t_text_token = t_text_token.unsqueeze(dim=1)
 
+        
         text = self.text_embed(text)
         clip_img = self.clip_img_embed(clip_img)
         token_embed = self.token_embedding(data_type).unsqueeze(dim=1)
-
+        
+        """
+        t_img_token shape:    torch.Size([4, 1, 1536])
+        t_text_token shape:   torch.Size([4, 1, 1536])
+        token_embed shape:    torch.Size([4, 1, 1536])
+        text shape:    torch.Size([4, 77, 1536])
+        clip_img shape:    torch.Size([4, 1, 1536])
+        img shape:    torch.Size([4, 1024, 1536])
+        """
+        # print("t_img_token shape:   ", t_img_token.shape)
+        # print(t_text_token.shape)
+        # print(token_embed.shape)
+        # print(text.shape)
+        # print(clip_img.shape)
+        # print(img.shape)
+     
         x = torch.cat((t_img_token, t_text_token, token_embed, text, clip_img, img), dim=1)
 
         num_text_tokens, num_img_tokens = text.size(1), img.size(1)
@@ -279,9 +311,65 @@ class UViT(nn.Module):
         t_img_token_out, t_text_token_out, token_embed_out, text_out, clip_img_out, img_out = x.split((1, 1, 1, num_text_tokens, 1, num_img_tokens), dim=1)
 
         img_out = self.decoder_pred(img_out)
+        # print(img_out.shape[1])
+        
         img_out = unpatchify(img_out, self.in_chans)
 
         clip_img_out = self.clip_img_out(clip_img_out)
 
         text_out = self.text_out(text_out)
         return img_out, clip_img_out, text_out
+
+
+    # def forward(self, img, clip_img, text, t_img, t_text, data_type):
+    #     _, _, H, W = img.shape
+
+    #     img = self.patch_embed(img)
+        
+    #     # t_img_token = self.time_embedding(t_img)
+    #     # t_img_token = t_img_token.unsqueeze(dim=1)
+    #     # t_text_token = self.time_embedding(t_text)
+    #     # t_text_token = t_text_token.unsqueeze(dim=1)
+
+    #     text = self.text_embed(text)
+    #     clip_img = self.clip_img_embed(clip_img)
+    #     token_embed = self.token_embedding(data_type).unsqueeze(dim=1)
+
+    #     x = torch.cat((t_img, t_text, token_embed, text, clip_img, img), dim=1)
+
+    #     num_text_tokens, num_img_tokens = text.size(1), img.size(1)
+
+    #     pos_embed = torch.cat(
+    #         [self.pos_embed[:, :1 + 1, :], self.pos_embed_token, self.pos_embed[:, 1 + 1:, :]], dim=1)
+    #     if H == self.img_size[0] and W == self.img_size[1]:
+    #         pass
+    #     else:  # interpolate the positional embedding when the input image is not of the default shape
+    #         pos_embed_others, pos_embed_patches = torch.split(pos_embed, [1 + 1 + 1 + num_text_tokens + 1, self.num_patches], dim=1)
+    #         pos_embed_patches = interpolate_pos_emb(pos_embed_patches, (self.img_size[0] // self.patch_size, self.img_size[1] // self.patch_size),
+    #                                                 (H // self.patch_size, W // self.patch_size))
+    #         pos_embed = torch.cat((pos_embed_others, pos_embed_patches), dim=1)
+
+    #     x = x + pos_embed
+    #     x = self.pos_drop(x)
+
+    #     skips = []
+    #     for blk in self.in_blocks:
+    #         x = blk(x)
+    #         skips.append(x)
+
+    #     x = self.mid_block(x)
+
+    #     for blk in self.out_blocks:
+    #         x = blk(x, skips.pop())
+
+    #     x = self.norm(x)
+
+    #     t_img_token_out, t_text_token_out, token_embed_out, text_out, clip_img_out, img_out = x.split((1, 1, 1, num_text_tokens, 1, num_img_tokens), dim=1)
+
+    #     img_out = self.decoder_pred(img_out)
+    #     img_out = unpatchify(img_out, self.in_chans)
+
+    #     clip_img_out = self.clip_img_out(clip_img_out)
+
+    #     text_out = self.text_out(text_out)
+    #     return img_out, clip_img_out, text_out

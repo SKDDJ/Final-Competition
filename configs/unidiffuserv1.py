@@ -18,23 +18,27 @@ def get_config():
     config.clip_text_dim = 768
     config.text_dim = 64  # reduce dimension
     config.data_type = 1
-    config.gradient_accumulation_steps = 1
-
-    # config.log_interval = 1000
-    # config.eval_interval = 100
-    # config.save_interval = 200
-
     
-    config.max_step = 200
+    
+    
+    config.localtest = 1 # if test in 145 localhost otherwise use 0 
+    
+    
     config.batch_size = 4
     
     config.center_crop = True
     config.real_prior = True
     config.reversion = None
-    
-    config.nnet_path = "models/uvit_v1.pth"
-    
+
+    # config.nnet_path = "models/uvit_v1.pth"
+    config.uvit = "other_models/first_15000.pth"
+    # config.uvit = "/data/hdd3/wuyujia/ImageReward/ImageReward/Competitionrepo/final_test/nnet-75000-good.pth"
+    # config.uvit = "/home/wuyujia/.cache/final_test/nnet.pth"
+    # config.uvit = "/data/hdd3/wuyujia/ImageReward/ImageReward/Competitionrepo/final_test/nnet_6000.pth"
     config.max_grad_norm = 1.0
+    config.device = "cuda:3"
+    config.use_nnet_standard = True
+    
     
     config.dataloader_num_workers = 10 # original is 10
     
@@ -45,10 +49,13 @@ def get_config():
     
     config.resolution = 512
     
-    config.clip_img_model = "ViT-B/32"
-    config.clip_text_model = "openai/clip-vit-large-patch14"
+    config.clip_img_model = "other_models/clip"
+    config.clip_text_model = "other_models/models--openai--clip-vit-large-patch14"
     # config.clip_text_model = "/home/schengwei/.cache/huggingface/hub/models--openai--clip-vit-large-patch14/snapshots/8d052a0f05efbaefbc9e8786ba291cfdf93e5bff"
-    
+    # config.modelcontext = '/workspace/final_json_data'
+    config.modelcontext = 'final_json_data/json'
+    config.accelerate_adapters = 'other_models/adapter'
+
     config.only_load_model = True
     
 
@@ -104,12 +111,12 @@ def get_config():
     # sample
 
     config.mode = "t2i"
-    config.n_samples = 9 # control the numbers of generating images 
+    # config.n_samples = 9 # control the numbers of generating images 
     config.n_iter = 1 # 过多的迭代次数可能导致过拟合或生成的样本过于接近训练数据
     config.nrow = 4
     config.sample = d(
-        sample_steps=100, 
-        scale=7.,
+        sample_steps=10, 
+        scale=9,
         t2i_cfg_mode='true_uncond' 
     )
 

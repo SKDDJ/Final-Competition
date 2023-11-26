@@ -27,10 +27,13 @@ from libs.clip import FrozenCLIPEmbedder
 import numpy as np
 import json
 from libs.uvit_multi_post_ln_v1 import UViT
-from peft import inject_adapter_in_model, LoraConfig,get_peft_model
+from peft import inject_adapter_in_model, LoraConfig,get_peft_model, AdaLoraConfig
 from resize import resize_images_in_path
-lora_config = LoraConfig(
-   inference_mode=False, r=64, lora_alpha=32, lora_dropout=0.1,target_modules=["qkv","fc1","fc2","proj","text_embed","clip_img_embed"]
+# lora_config = LoraConfig(
+#    inference_mode=False, r=64, lora_alpha=32, lora_dropout=0.1,target_modules=["qkv","fc1","fc2","proj","text_embed","clip_img_embed"]
+# )
+lora_config = AdaLoraConfig(
+   inference_mode=False, r=64, lora_alpha=32, lora_dropout=0.1,target_modules=["qkv","fc1","fc2"]
 )
 
 def get_model_size(model):
@@ -43,6 +46,20 @@ def get_model_size(model):
     return para
 
 def stable_diffusion_beta_schedule(linear_start=0.00085, linear_end=0.0120, n_timestep=1000):
+    """
+    根据代码，_betas 是一个用于稳定扩散过程的 beta 值序列。
+    它是通过在指定的时间步数内，在线性起始值和线性结束值之间生成一系列均匀间隔的值得到的。
+    这些值被用作稳定扩散过程中的温度参数，控制噪声的强度。
+    
+    
+    _betas 是通过 stable_diffusion_beta_schedule 函数生成的，
+    这个函数根据指定的线性起始值（linear_start）和线性结束值（linear_end）
+    在给定的时间步数（n_timestep）内生成一个 beta 值序列。这些 beta 值控制了稳定扩散过程中的噪声强度。
+
+N = len(_betas) 表示 _betas 序列的长度，即时间步数。
+在这个例子中，n_timestep 参数设置为 1000，所以 N 将等于 1000。
+这意味着扩散过程被分解为 1000 个离散的时间步。
+    """
     _betas = (
         torch.linspace(linear_start ** 0.5, linear_end ** 0.5, n_timestep, dtype=torch.float64) ** 2
     )
@@ -87,16 +104,23 @@ def sample(prompt_index, config, nnet, clip_text_model, autoencoder, device):
     config = ml_collections.FrozenConfigDict(config)
 
     _betas = stable_diffusion_beta_schedule()
-    N = len(_betas)
+    N = len(_betas) # 总的时间步数 N 是扩散过程中的时间步数（Number of Timesteps）
+    ### 1000 个离散的时间步
 
 
     use_caption_decoder = config.text_dim < config.clip_text_dim or config.mode != 't2i'
-    if use_caption_decoder:
+    ### 如果不是 t2i 模式 ｜ text-dim(64) < clip_text_dim (768)
+    ### 用个线性层 linear 升到 768 应该也可以，不过 gpt2
+    ### use_caption_decoder肯定是 true 了
+    
+    if use_caption_decoder: 
+        ### 这里如果为 true 就加载 gpt2 了
         from libs.caption_decoder import CaptionDecoder
         caption_decoder = CaptionDecoder(device=device, **config.caption_decoder)
     else:
         caption_decoder = None
 
+    ### 这一行代码是使用clip_text_model对空字符串进行编码，并将结果存储在empty_context变量中。
     empty_context = clip_text_model.encode([''])[0]
 
     def split(x):
@@ -133,13 +157,20 @@ def sample(prompt_index, config, nnet, clip_text_model, autoencoder, device):
         if config.sample.scale == 0.:
             return x_out
 
+        ### sample scale 最好设置为 0， 没看出来下面的有什么用噻
+        
+        
         if config.sample.t2i_cfg_mode == 'empty_token':
+            ### 这里的 empty_context是上面直接对空字符串编码得到的，确实是 empty_token
             _empty_context = einops.repeat(empty_context, 'L D -> B L D', B=x.size(0))
             if use_caption_decoder:
-                _empty_context = caption_decoder.encode_prefix(_empty_context)
+                _empty_context = caption_decoder.encode_prefix(_empty_context) 
+                # 把空字符串的编码结果，用 caption_decoder 进行编码，得到的结果是 64 维的，从 768 降低到 64 维
             z_out_uncond, clip_img_out_uncond, text_out_uncond = nnet(z, clip_img, text=_empty_context, t_img=timesteps, t_text=t_text,
                                                                       data_type=torch.zeros_like(t_text, device=device, dtype=torch.int) + config.data_type)
             x_out_uncond = combine(z_out_uncond, clip_img_out_uncond)
+        
+        
         elif config.sample.t2i_cfg_mode == 'true_uncond':
             text_N = torch.randn_like(text)  # 3 other possible choices
             z_out_uncond, clip_img_out_uncond, text_out_uncond = nnet(z, clip_img, text=text_N, t_img=timesteps, t_text=torch.ones_like(timesteps) * N,
@@ -162,13 +193,17 @@ def sample(prompt_index, config, nnet, clip_text_model, autoencoder, device):
 
 
     contexts, img_contexts, clip_imgs = prepare_contexts(config, clip_text_model, autoencoder)
-    contexts_low_dim = contexts if not use_caption_decoder else caption_decoder.encode_prefix(contexts)  # the low dimensional version of the contexts, which is the input to the nnet
-
+    contexts_low_dim = contexts if not use_caption_decoder else caption_decoder.encode_prefix(contexts) 
+    ### 通过一个 linear 层降低维度 from 768 to 64 
+    
+    
     _n_samples = contexts_low_dim.size(0)
 
 
     def sample_fn(**kwargs):
-        # _z_init = torch.randn(_n_samples, *config.z_shape, device=device)
+        
+        ### _z, _clip_img = sample_fn(text=contexts_low_dim)
+        _z_init = torch.randn(_n_samples, *config.z_shape, device=device)
         _clip_img_init = torch.randn(_n_samples, 1, config.clip_img_dim, device=device)
 
 
@@ -183,7 +218,22 @@ def sample(prompt_index, config, nnet, clip_text_model, autoencoder, device):
         dpm_solver = DPM_Solver(model_fn, noise_schedule, predict_x0=True, thresholding=False)
         with torch.no_grad(), torch.autocast(device_type="cuda" if "cuda" in str(device) else "cpu"):
             start_time = time.time()
+            
+          ###  _x_init 就是上面几行随机初始化的img+clip_img ; steps就是推理步数默认 150 在 config 中；
             x = dpm_solver.sample(_x_init, steps=config.sample.sample_steps, eps=1. / N, T=1.)
+            """ 
+            
+            _x_init 就是上面几行随机初始化的img+clip_img ; steps就是推理步数默认 150 在 config 中；
+            
+            x:输入数据，通常是从正态分布采样得到的初始值，位于扩散过程的某个起始时间点 T。
+
+eps:采样结束的时间点，通常非常接近 0（比如 1e-4 或 1e-3），表示扩散过程的最终阶段。
+
+T:采样开始的时间点，如果是 None，则使用噪声调度的默认起始时间。
+
+order:DPM-Solver 的顺序，用于指定使用哪种扩散算法。
+            """
+            
             end_time = time.time()
             print(f'\ngenerate {_n_samples} samples with {config.sample.sample_steps} steps takes {end_time - start_time:.2f}s')
 
@@ -349,3 +399,4 @@ def main(argv=None):
 #  finetuned parameters: 268028672
 if __name__ == "__main__":
     main()
+

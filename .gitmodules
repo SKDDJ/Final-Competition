@@ -1,0 +1,3 @@
+[submodule "dependency/annotated_deep_learning_paper_implementations"]
+	path = dependency/annotated_deep_learning_paper_implementations
+	url = https://github.com/SKDDJ/labml_nn.git

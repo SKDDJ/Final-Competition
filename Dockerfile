@@ -1,5 +1,6 @@
 # 使用基础镜像 pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
-FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
+# FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-runtime
+FROM pytorch/pytorch:2.1.1-cuda12.1-cudnn8-runtime
 
 # 设置工作目录为 /workspace
 WORKDIR /workspace
@@ -15,7 +16,7 @@ COPY ./requirements.txt ./requirements.txt
 RUN apt update && apt upgrade -y
 
 # 安装所需的系统依赖包
-RUN apt install -y git libgl1-mesa-glx libglib2.0-0
+RUN DEBIAN_FRONTEND=noninteractive apt install -y git libgl1-mesa-glx libglib2.0-0
 
 # 安装gcc和g++编译器
 RUN apt-get install -y gcc g++
@@ -28,3 +29,5 @@ RUN pip install -r ./requirements.txt
 
 # 复制项目目录中的所有文件到容器的当前工作目录
 COPY . .
+
+

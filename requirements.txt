@@ -1,19 +1,19 @@
 accelerate==0.23.0
 peft==0.5.0
 absl-py==1.4.0
-transformers==4.26.0
-einops==0.6.1
+
+
+# einops==0.6.1
 wandb==0.15.5
 ml_collections==0.1.1
-xformers==0.0.16
-triton==2.0.0
+triton==2.1.0
 
 insightface==0.7.3
 mxnet==1.9.1
-numpy==1.23.0
+# numpy==1.26.0
 onnxruntime==1.15.1
 onnxruntime-gpu==1.15.1
-torch==1.13.1
+torch==2.1.1
 ftfy==6.1.1
 regex==2023.6.3
 tqdm==4.65.0
@@ -21,6 +21,15 @@ logger==1.4
 # git+https://github.com/openai/CLIP.git
 ./CLIP
 
+rembg[gpu] 
 
 
+gitpython
+numpy
+pyyaml
 
+./dependency/annotated_deep_learning_paper_implementations
+
+transformers==4.35.2
+
+diffusers[torch]
