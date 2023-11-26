@@ -345,3 +345,32 @@ def _get_model_file(
             )
 
       
+
+
+class CLIPImageEmbedder(nn.Module):
+    """
+    ## CLIP Image Embedder
+    """
+    def __init__(self, model="ViT-B/32", device='cuda:0'):
+        super().__init__()
+        
+        self.model, _ = load_clip(name=model, device=device)
+        self.model.eval()
+        self.register_buffer('mean', torch.Tensor([0.48145466, 0.4578275, 0.40821073]), persistent=False)
+        self.register_buffer('std', torch.Tensor([0.26862954, 0.26130258, 0.27577711]), persistent=False)
+
+    def preprocess(self, x):
+        # normalize to [0,1]
+        x = kornia.geometry.resize(x, (224, 224),
+                                   interpolation='bicubic', align_corners=True)
+        x = (x + 1.) / 2.
+        # re-normalize according to clip
+        x = kornia.enhance.normalize(x, self.mean, self.std)
+        return x
+
+    def forward(self, x):
+        # x is assumed to be in range [-1,1]
+        out = self.model.encode_image(self.preprocess(x))
+        # out = out.to(x.dtype)
+        return out
+    

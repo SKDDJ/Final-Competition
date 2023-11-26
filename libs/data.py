@@ -8,11 +8,134 @@ import PIL
 from PIL import Image
 from torch.utils.data import Dataset
 import random
-from PIL.ImageOps import exif_transpose
-import torch
-from pathlib import Path
 
 
+
+training_templates_smallest = [
+    'photo of a sks {}',
+]
+
+reg_templates_smallest = [
+    'photo of a {}',
+]
+
+imagenet_templates_small = [
+    'a photo of a {}',
+    'a rendering of a {}',
+    'a cropped photo of the {}',
+    'the photo of a {}',
+    'a photo of a clean {}',
+    'a photo of a dirty {}',
+    'a dark photo of the {}',
+    'a photo of my {}',
+    'a photo of the cool {}',
+    'a close-up photo of a {}',
+    'a bright photo of the {}',
+    'a cropped photo of a {}',
+    'a photo of the {}',
+    'a good photo of the {}',
+    'a photo of one {}',
+    'a close-up photo of the {}',
+    'a rendition of the {}',
+    'a photo of the clean {}',
+    'a rendition of a {}',
+    'a photo of a nice {}',
+    'a good photo of a {}',
+    'a photo of the nice {}',
+    'a photo of the small {}',
+    'a photo of the weird {}',
+    'a photo of the large {}',
+    'a photo of a cool {}',
+    'a photo of a small {}',
+    'an illustration of a {}',
+    'a rendering of a {}',
+    'a cropped photo of the {}',
+    'the photo of a {}',
+    'an illustration of a clean {}',
+    'an illustration of a dirty {}',
+    'a dark photo of the {}',
+    'an illustration of my {}',
+    'an illustration of the cool {}',
+    'a close-up photo of a {}',
+    'a bright photo of the {}',
+    'a cropped photo of a {}',
+    'an illustration of the {}',
+    'a good photo of the {}',
+    'an illustration of one {}',
+    'a close-up photo of the {}',
+    'a rendition of the {}',
+    'an illustration of the clean {}',
+    'a rendition of a {}',
+    'an illustration of a nice {}',
+    'a good photo of a {}',
+    'an illustration of the nice {}',
+    'an illustration of the small {}',
+    'an illustration of the weird {}',
+    'an illustration of the large {}',
+    'an illustration of a cool {}',
+    'an illustration of a small {}',
+    'a depiction of a {}',
+    'a rendering of a {}',
+    'a cropped photo of the {}',
+    'the photo of a {}',
+    'a depiction of a clean {}',
+    'a depiction of a dirty {}',
+    'a dark photo of the {}',
+    'a depiction of my {}',
+    'a depiction of the cool {}',
+    'a close-up photo of a {}',
+    'a bright photo of the {}',
+    'a cropped photo of a {}',
+    'a depiction of the {}',
+    'a good photo of the {}',
+    'a depiction of one {}',
+    'a close-up photo of the {}',
+    'a rendition of the {}',
+    'a depiction of the clean {}',
+    'a rendition of a {}',
+    'a depiction of a nice {}',
+    'a good photo of a {}',
+    'a depiction of the nice {}',
+    'a depiction of the small {}',
+    'a depiction of the weird {}',
+    'a depiction of the large {}',
+    'a depiction of a cool {}',
+    'a depiction of a small {}',
+]
+
+imagenet_dual_templates_small = [
+    'a photo of a {} with {}',
+    'a rendering of a {} with {}',
+    'a cropped photo of the {} with {}',
+    'the photo of a {} with {}',
+    'a photo of a clean {} with {}',
+    'a photo of a dirty {} with {}',
+    'a dark photo of the {} with {}',
+    'a photo of my {} with {}',
+    'a photo of the cool {} with {}',
+    'a close-up photo of a {} with {}',
+    'a bright photo of the {} with {}',
+    'a cropped photo of a {} with {}',
+    'a photo of the {} with {}',
+    'a good photo of the {} with {}',
+    'a photo of one {} with {}',
+    'a close-up photo of the {} with {}',
+    'a rendition of the {} with {}',
+    'a photo of the clean {} with {}',
+    'a rendition of a {} with {}',
+    'a photo of a nice {} with {}',
+    'a good photo of a {} with {}',
+    'a photo of the nice {} with {}',
+    'a photo of the small {} with {}',
+    'a photo of the weird {} with {}',
+    'a photo of the large {} with {}',
+    'a photo of a cool {} with {}',
+    'a photo of a small {} with {}',
+]
+
+per_img_token_list = [
+    'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ', 'ק', 'ר', 'ש', 'ת',
+]
 
 def _convert_image_to_rgb(image):
     return image.convert("RGB")
@@ -27,234 +150,176 @@ def _transform(n_px):
         transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
 
-def collate_fn(examples, with_prior_preservation=False):
-    # has_attention_mask = "instance_attention_mask" in examples[0]
-    
-    input_ids = [example["instance_prompt_ids"] for example in examples]#实例id
-    pixel_values = [example["instance_images"] for example in examples]#实例图像
-    clip_img = [example["instance_clip_images"] for example in examples]
-    mask = [example["mask"] for example in examples]
-    # if has_attention_mask:
-    #     attention_mask = [example["instance_attention_mask"] for example in examples]
-
-    # Concat class and instance examples for prior preservation.
-    # We do this to avoid doing two forward passes.
-    if with_prior_preservation:
-        input_ids += [example["class_prompt_ids"] for example in examples]
-        pixel_values += [example["class_images"] for example in examples]
-        clip_img += [example["class_clip_images"] for example in examples]
-        mask += [example["class_mask"] for example in examples]
-        # if has_attention_mask:
-        #     attention_mask += [example["class_attention_mask"] for example in examples]
-    clip_img = torch.stack(clip_img)
-    pixel_values = torch.stack(pixel_values)
-    mask = torch.stack(mask)
-    pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-    mask = mask.to(memory_format=torch.contiguous_format).float()
-    clip_img = clip_img.to(memory_format=torch.contiguous_format).float()
-    input_ids = torch.cat(input_ids, dim=0)
-    mask = mask.unsqueeze(1)
-    
-    
-    # if has_attention_mask:
-    #     attention_mask = torch.cat(attention_mask, dim=0)
-    #     batch["attention_mask"] = attention_mask
-    return input_ids,pixel_values,clip_img,mask
-
-
-class PromptDataset(Dataset):
-    "A simple dataset to prepare the prompts to generate class images on multiple GPUs."
-
-    def __init__(self, prompt, num_samples):
-        self.prompt = prompt
-        self.num_samples = num_samples
-
-    def __len__(self):
-        return self.num_samples
-
-    def __getitem__(self, index):
-        example = {}
-        example["prompt"] = self.prompt
-        example["index"] = index
-        return example
-
-
-def tokenize_prompt(tokenizer, prompt, tokenizer_max_length=None):
-    if tokenizer_max_length is not None:
-        max_length = tokenizer_max_length
-    else:
-        max_length = tokenizer.model_max_length
-
-    text_inputs = tokenizer(
-        prompt,
-        truncation=True,
-        padding="max_length",
-        max_length=max_length,
-        return_tensors="pt",
-    )
-
-    return text_inputs
 
 
 class PersonalizedBase(Dataset):
     def __init__(self,
-                 concepts_list,
-                 size=512,
-                 mask_size=64,
-                 center_crop=False,
-                 tokenizer_max_length=None,
-                 num_class_images=200,
-                 tokenizer=None,
-                 config = None,
-                 hflip=False,
-                 aug=True,
+                 data_root,  # The root directory of the dataset.
+                 resolution,  # The resolution of the images.
+                 repeats=100,  # The number of times to repeat the dataset.
+                 flip_p=0.5,  # The probability of flipping the image horizontally.
+                 set="train",  # The dataset split to use.
+                 class_word="dog",  # The class word to use for the dataset.
+                 per_image_tokens=False,  # Whether to use per-image tokens.
+                 mixing_prob=0.25,  # The probability of mixing the image and text.
+                 coarse_class_text=None,  # The coarse class text to use for the dataset.
+                 reg = False  # Whether to use regression instead of classification.
                  ):
-        self.size = size
-        self.mask_size = mask_size
-        
-        self.center_crop = center_crop
-        self.tokenizer = tokenizer
-        
-        self.tokenizer_max_length = tokenizer_max_length
-        
-        self.interpolation = PIL.Image.BILINEAR
-        self.aug = aug
-        
-        self.instance_images_path = []
-        self.class_images_path = []
-        
-        for concept in concepts_list:
-            inst_img_path = [
-                (x, concept["instance_prompt"]) for x in Path(concept["instance_data_dir"]).iterdir() if x.is_file()
-            ]
-            self.instance_images_path.extend(inst_img_path)
+        """
+        A dataset class for personalized image-text matching.
 
-            class_data_root = Path(concept["class_data_dir"])
+        Args:
+        - data_root: str, the root directory of the dataset.
+        - resolution: int, the resolution of the images.
+        - repeats: int, the number of times to repeat the dataset.
+        - flip_p: float, the probability of flipping the image horizontally.
+        - set: str, the dataset split to use.
+        - class_word: str, the class word to use for the dataset.
+        - per_image_tokens: bool, whether to use per-image tokens.
+        - mixing_prob: float, the probability of mixing the image and text.
+        - coarse_class_text: str, the coarse class text to use for the dataset.
+        - reg: bool, whether to use regression instead of classification.
+        """
+        self.data_root = data_root
+
+        # Get the paths of all images in the dataset.
+        self.image_paths = [os.path.join(self.data_root, file_path) for file_path in os.listdir(self.data_root) if not file_path.endswith(".txt")]
+
+        self.num_images = len(self.image_paths)
+        self._length = self.num_images 
+
+        self.placeholder_token = class_word
+        self.resolution = resolution
+        self.per_image_tokens = per_image_tokens
+        self.mixing_prob = mixing_prob
         
-       
-            if os.path.isdir(class_data_root):
-                class_images_path = list(class_data_root.iterdir())
-               
-                class_prompt = [concept["class_prompt"] for _ in range(len(class_images_path))]
-            else:
-                with open(class_data_root, "r") as f:
-                    class_images_path = f.read().splitlines()
-                with open(concept["class_prompt"], "r") as f:
-                    class_prompt = f.read().splitlines()
+        # Define the image transforms.
+        self.transform_clip = _transform(224)
+        self.transform = transforms.Compose([transforms.Resize(resolution), transforms.CenterCrop(resolution),
+                                             transforms.ToTensor(), transforms.Normalize(0.5, 0.5)])
 
-            class_img_path = [(x, y) for (x, y) in zip(class_images_path, class_prompt)]
-            self.class_images_path.extend(class_img_path[:num_class_images])
-       
-        self.transform_clip = _transform(224)#将clip_img 转化为224分辨率
-        random.shuffle(self.instance_images_path)
-        self.num_instance_images = len(self.instance_images_path)
-       
-        self.num_class_images = len(self.class_images_path)
-        self._length = max(self.num_class_images, self.num_instance_images)
-        self.flip = transforms.RandomHorizontalFlip(0.5 * hflip)
+        self.coarse_class_text = coarse_class_text
 
-        self.image_transforms = transforms.Compose(
-            [
-                self.flip,
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
+        # Check if per-image tokens are being used.
+        if per_image_tokens:
+            assert self.num_images < len(per_img_token_list), f"Can't use per-image tokens when the training set contains more than {len(per_img_token_list)} tokens. To enable larger sets, add more tokens to 'per_img_token_list'."
+
+        # If the dataset split is "train", repeat the dataset.
+        if set == "train":
+            self._length = self.num_images * repeats
+
+        self.reg = reg
 
     def __len__(self):
         return self._length
-    
-    def preprocess(self, image, scale, resample):
-### 在这里强行加了一堆 64*64 的mask，动态的 mask 有点问题，不确定影响大不大        
-        outer, inner = self.size, scale
-        factor = self.size // self.mask_size
-        if scale > self.size:
-            outer, inner = scale, self.size
-        top, left = np.random.randint(0, outer - inner + 1), np.random.randint(0, outer - inner + 1)
-        image = image.resize((scale, scale), resample=resample)
-        image = np.array(image).astype(np.uint8)
-   
-        image = (image / 127.5 - 1.0).astype(np.float32)
-        instance_image = np.zeros((self.size, self.size, 3), dtype=np.float32)
-        mask = np.zeros((self.size // factor, self.size // factor))
-        if scale > self.size:
-            instance_image = image[top : top + inner, left : left + inner, :]
-            mask = np.ones((self.size // factor, self.size // factor))
-            mask = np.ones((64,64))
-         
-        else:
-            instance_image[top : top + inner, left : left + inner, :] = image
-            mask[
-                top // factor + 1 : (top + scale) // factor - 1, left // factor + 1 : (left + scale) // factor - 1
-            ] = 1.0
-            mask = np.ones((64,64))
-          
-            
-        
-        return instance_image, mask
 
-    def __getitem__(self, index):
-        example = {}
-        instance_image, instance_prompt = self.instance_images_path[index % self.num_instance_images]
+    def __getitem__(self, i):
+        # Load the image and convert it to RGB.
+        pil_image = Image.open(self.image_paths[i % self.num_images]).convert("RGB")
+
+        placeholder_string = self.placeholder_token
+        if self.coarse_class_text:
+            placeholder_string = f"{self.coarse_class_text} {placeholder_string}"
+
+        # Generate the text for the image.
+        if not self.reg:
+            text = random.choice(training_templates_smallest).format(placeholder_string)
+        else:
+            text = random.choice(reg_templates_smallest).format(placeholder_string)
+
+        # Apply the image transforms.
+        img = self.transform(pil_image)
+        img4clip = self.transform_clip(pil_image)
+        
+        return img, img4clip, text, 0
     
-        instance_image = Image.open(instance_image)
+    
+class PersonalizedBasev2(Dataset):
+    def __init__(self,
+                 image_paths,  # a list of image paths
+                 resolution,  # the resolution of the images
+                 repeats=100,  # the number of times to repeat the dataset
+                 flip_p=0.5,  # the probability of flipping the image horizontally
+                 set="train",  # the dataset split to use
+                 class_word="dog",  # the class word to use for the dataset
+                 per_image_tokens=False,  # whether to use per-image tokens
+                 mixing_prob=0.25,  # the probability of mixing the text with another text
+                 coarse_class_text=None,  # the coarse class text to use for the dataset
+                 reg = False  # whether to use regular templates
+                 ):
+        """
+        A dataset class for personalized image captioning.
+
+        Args:
+        - image_paths: a list of image paths
+        - resolution: the resolution of the images
+        - repeats: the number of times to repeat the dataset
+        - flip_p: the probability of flipping the image horizontally
+        - set: the dataset split to use
+        - class_word: the class word to use for the dataset
+        - per_image_tokens: whether to use per-image tokens
+        - mixing_prob: the probability of mixing the text with another text
+        - coarse_class_text: the coarse class text to use for the dataset
+        - reg: whether to use regular templates
+        """
+        self.image_paths =  image_paths
+
+        self.num_images = len(self.image_paths)
+        self._length = self.num_images 
+
+        self.placeholder_token = class_word
+        self.resolution = resolution
+        self.per_image_tokens = per_image_tokens
+        self.mixing_prob = mixing_prob
         
-        if not instance_image.mode == "RGB":
-            instance_image = instance_image.convert("RGB")
-        example["instance_clip_images"] = self.transform_clip(instance_image)
-        instance_image = self.flip(instance_image)
         
-        # apply resize augmentation and create a valid image region mask
-        random_scale = self.size
-        if self.aug:
-            random_scale = (
-                np.random.randint(self.size // 3, self.size + 1)
-                if np.random.uniform() < 0.66
-                else np.random.randint(int(1.2 * self.size), int(1.4 * self.size))
-            )
+        self.transform_clip = _transform(224)
+        self.transform = transforms.Compose([transforms.Resize(resolution), transforms.CenterCrop(resolution),
+                                             transforms.ToTensor(), transforms.Normalize(0.5, 0.5)])
+
+        self.coarse_class_text = coarse_class_text
+
+        if per_image_tokens:
+            assert self.num_images < len(per_img_token_list), f"Can't use per-image tokens when the training set contains more than {len(per_img_token_list)} tokens. To enable larger sets, add more tokens to 'per_img_token_list'."
+
+        if set == "train":
+            self._length = self.num_images * repeats
+
+        self.reg = reg
+
+    def __len__(self):
+        """
+        Returns the length of the dataset.
+        """
+        return self._length
+
+    def __getitem__(self, i):
+        """
+        Returns the i-th item of the dataset.
+
+        Args:
+        - i: the index of the item to return
+
+        Returns:
+        - img: the image tensor
+        - img4clip: the image tensor for CLIP
+        - text: the text string
+        - 0: a dummy label
+        """
+        pil_image = Image.open(self.image_paths[i % self.num_images]).convert("RGB")
+
+        placeholder_string = self.placeholder_token
+        if self.coarse_class_text:
+            placeholder_string = f"{self.coarse_class_text} {placeholder_string}"
+
+        if not self.reg:
+            text = random.choice(training_templates_smallest).format(placeholder_string)
+        else:
+            text = random.choice(reg_templates_smallest).format(placeholder_string)
+
+        # default to score-sde preprocessing
+        img = self.transform(pil_image)
+        img4clip = self.transform_clip(pil_image)
         
-        
-        
-        instance_image, mask = self.preprocess(instance_image, random_scale, self.interpolation)
-        
-        if random_scale < 0.6 * self.size:
-            instance_prompt = np.random.choice(["a far away ", "very small "]) + instance_prompt
-        elif random_scale > self.size:
-            instance_prompt = np.random.choice(["zoomed in ", "close up "]) + instance_prompt
-        
-        example["instance_images"] = torch.from_numpy(instance_image).permute(2, 0, 1)
-        example["mask"] = torch.from_numpy(mask)
-        #torch.Size([3, 512, 512]) torch.Size([64, 64])
-        example["instance_prompt_ids"] = self.tokenizer(
-            instance_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-        # tensor([[49406,  1125,   539,   320, 49408,  1611, 49407, 49407, 49407, 49407,
-        #  49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        #  49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        #  49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        #  49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        #  49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        #  49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407,
-        #  49407, 49407, 49407, 49407, 49407, 49407, 49407]])
-        class_image, class_prompt = self.class_images_path[index % self.num_class_images]
-        class_image = Image.open(class_image)
-        if not class_image.mode == "RGB":
-            class_image = class_image.convert("RGB")
-        example["class_images"] = self.image_transforms(class_image)
-        example["class_mask"] = torch.ones_like(example["mask"])
-        example["class_prompt_ids"] = self.tokenizer(
-            class_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-        example["class_clip_images"] = self.transform_clip(class_image)
-      
-        return example
+        return img, img4clip, text, 0
+

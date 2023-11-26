@@ -897,6 +897,7 @@ class DPM_Solver:
 
         [1] A. Jolicoeur-Martineau, K. Li, R. Piché-Taillefer, T. Kachman, and I. Mitliagkas, "Gotta go fast when generating data with score-based models," arXiv preprint arXiv:2105.14080, 2021.
         """
+
         t_0 = eps
         t_T = self.noise_schedule.T if T is None else T
         device = x.device
@@ -947,6 +948,7 @@ class DPM_Solver:
                 for i, order in enumerate(orders):
                     vec_s, vec_t = torch.ones((x.shape[0],)).to(device) * timesteps[i], torch.ones((x.shape[0],)).to(device) * timesteps[i + 1]
                     x = self.dpm_solver_update(x, vec_s, vec_t, order, solver_type=solver_type)
-        if denoise:
+        if True:
             x = self.denoise_fn(x, torch.ones((x.shape[0],)).to(device) * t_0)
+
         return x

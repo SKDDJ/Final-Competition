@@ -62,15 +62,21 @@ class Schedule(object):  # discrete time
         return self.skip_betas[s, t] * self.cum_betas[s] / self.cum_betas[t]
 
     def sample(self, x0):  # sample from q(xn|x0), where n is uniform
+        """这是个用来加噪声的函数"""
         if isinstance(x0, list):
-            n = np.random.choice(list(range(1, self.N + 1)), (len(x0[0]),))
-            eps = [torch.randn_like(tensor) for tensor in x0]
+            n = np.random.choice(list(range(1, self.N + 1)), (len(x0[0]),)) ### 随机选择时间步: 使用 np.random.choice 从 [1, N] 范围内随机选择一个时间步 n。N是扩散过程的总步数。
+
+            eps = [torch.randn_like(tensor) for tensor in x0] ### 生成噪声: eps 是随机噪声，与 x0 的维度相同。
+            
+            #### xn 是通过应用噪声到原始数据 x0 来获得的，这是扩散模型的核心步骤。这里使用了 cum_alphas 和 cum_betas，用于控制噪声大小的系数。
             xn = [stp(self.cum_alphas[n] ** 0.5, tensor) + stp(self.cum_betas[n] ** 0.5, _eps) for tensor, _eps in zip(x0, eps)]
             return torch.tensor(n), eps, xn
         else:
             n = np.random.choice(list(range(1, self.N + 1)), (len(x0),))
             eps = torch.randn_like(x0)
             xn = stp(self.cum_alphas[n] ** 0.5, x0) + stp(self.cum_betas[n] ** 0.5, eps)
+            
+        ###### 函数返回 n（选择的时间步），eps（生成的噪声），以及 xn（噪声处理后的数据）。
             return torch.tensor(n), eps, xn
 
     def __repr__(self):
@@ -92,6 +98,8 @@ def LSimple_T2I(img, clip_img, text, data_type, nnet, schedule, device, config, 
     clip_img_n=clip_img_n.to(torch.float32)
     t_text=torch.zeros_like(n, device=device)
     data_type=torch.zeros_like(t_text, device=device, dtype=torch.int) + config.data_type
+    # torch.save(img_n, 'girl1_img_face.pt')
+    # exit()
     img_out, clip_img_out, text_out = nnet(img_n, clip_img_n, text, t_img=n, t_text=t_text, data_type=data_type)
     
     img_out, img_out_prior = torch.chunk(img_out, 2, dim=0)
